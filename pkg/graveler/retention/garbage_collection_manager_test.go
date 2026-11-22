@@ -61,6 +61,76 @@ func createTestFile(t *testing.T, filename, testLine string, count int) {
 	}
 }
 
+func TestGarbageCollectionManager_SaveGetRulesRoundTrip(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	blockAdapter := mem.New(t.Context())
+	refMgr := &testutil.RefsFake{}
+	const prefix = "test_prefix"
+	ns := graveler.StorageNamespace("mem://test-namespace/my-repo")
+
+	tests := []struct {
+		name  string
+		rules *graveler.GarbageCollectionRules
+	}{
+		{
+			name: "positive retention",
+			rules: &graveler.GarbageCollectionRules{
+				DefaultRetentionDays: 14,
+			},
+		},
+		{
+			name: "zero retention",
+			rules: &graveler.GarbageCollectionRules{
+				DefaultRetentionDays: 0,
+			},
+		},
+		{
+			name: "zero retention with empty branches",
+			rules: &graveler.GarbageCollectionRules{
+				DefaultRetentionDays: 0,
+				BranchRetentionDays:  map[string]int32{},
+			},
+		},
+		{
+			name: "branch overrides",
+			rules: &graveler.GarbageCollectionRules{
+				DefaultRetentionDays: 7,
+				BranchRetentionDays:  map[string]int32{"main": 30},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		for _, tt := range tests {
+			t.Run(tc.Name+"/"+tt.name, func(t *testing.T) {
+				gc := retention.NewGarbageCollectionManager(blockAdapter, refMgr, prefix)
+				err := gc.SaveRules(ctx, tc.StorageID, ns, tt.rules)
+				require.NoError(t, err)
+				got, err := gc.GetRules(ctx, tc.StorageID, ns)
+				require.NoError(t, err)
+				require.Equal(t, tt.rules.DefaultRetentionDays, got.DefaultRetentionDays)
+				if len(tt.rules.BranchRetentionDays) > 0 {
+					require.Equal(t, tt.rules.BranchRetentionDays, got.BranchRetentionDays)
+				}
+			})
+		}
+	}
+}
+
+func TestGarbageCollectionManager_GetRulesNotFound(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	blockAdapter := mem.New(t.Context())
+	refMgr := &testutil.RefsFake{}
+	const prefix = "test_prefix"
+	ns := graveler.StorageNamespace("mem://test-namespace/no-rules-repo")
+
+	gc := retention.NewGarbageCollectionManager(blockAdapter, refMgr, prefix)
+	_, err := gc.GetRules(ctx, config.SingleBlockstoreID, ns)
+	require.ErrorIs(t, err, graveler.ErrNotFound)
+}
+
 func TestGarbageCollectionManager_SaveGarbageCollectionUncommitted(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
